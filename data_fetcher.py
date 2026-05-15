@@ -45,7 +45,10 @@ MARKET_COLUMNS = ["最新收盘价", "涨跌幅", "换手率", "量比", "振幅
 
 
 def normalize_code(code: str) -> str:
-    return str(code or "").strip().upper().zfill(6)
+    text = str(code or "").strip().upper()
+    if text.startswith(("SH", "SZ", "BJ")):
+        text = text[2:]
+    return text.zfill(6) if text else ""
 
 
 def _now_text() -> str:
@@ -78,7 +81,7 @@ def _read_cache() -> pd.DataFrame:
         if column not in df.columns:
             df[column] = None
 
-    df = df[CACHE_COLUMNS]
+    df = df[CACHE_COLUMNS].copy()
     df["股票代码"] = df["股票代码"].map(normalize_code)
     return df
 
@@ -89,8 +92,18 @@ def _write_cache(df: pd.DataFrame) -> None:
             df[column] = None
     df = df[CACHE_COLUMNS].copy()
     df["股票代码"] = df["股票代码"].map(normalize_code)
+    df = df[df["股票代码"] != ""]
     df = df.drop_duplicates(subset=["股票代码"], keep="last")
     df.to_csv(CACHE_FILE, index=False, encoding="utf-8-sig")
+
+
+def get_cache_summary() -> dict[str, Any]:
+    df = _read_cache()
+    if df.empty:
+        return {"count": 0, "latest_update": "无", "finance_count": 0}
+    finance_count = df[FINANCIAL_COLUMNS].notna().any(axis=1).sum()
+    latest_update = df["更新时间"].dropna().astype(str).max() if "更新时间" in df.columns else "无"
+    return {"count": int(len(df)), "latest_update": latest_update or "无", "finance_count": int(finance_count)}
 
 
 def _cache_row(df: pd.DataFrame, code: str) -> dict[str, Any] | None:
@@ -123,7 +136,7 @@ def _fetch_akshare_spot() -> tuple[pd.DataFrame | None, str | None]:
         spot["代码"] = spot["代码"].astype(str).map(normalize_code)
         return spot, None
     except Exception as exc:  # noqa: BLE001
-        return None, f"AkShare 获取失败：{exc}"
+        return None, f"AkShare 获取行情失败：{exc}"
 
 
 def _pick_market_value(row: pd.Series, *names: str) -> float | None:
@@ -180,11 +193,130 @@ def _normalize_output_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _market_rows_from_spot(spot_df: pd.DataFrame, cache_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for _, spot_row in spot_df.iterrows():
+        code = normalize_code(spot_row.get("代码"))
+        cached = _cache_row(cache_df, code)
+        rows.append(_spot_to_row(spot_row, cached, code))
+    return pd.DataFrame(rows)
+
+
+def refresh_market_cache() -> tuple[dict[str, Any], list[str]]:
+    """Fetch the current A-share list and market data, then update stock_metrics.csv."""
+
+    cache_df = _read_cache()
+    spot_df, error = _fetch_akshare_spot()
+    if spot_df is None:
+        return get_cache_summary(), [error or "真实行情接口暂时不可用，缓存未更新。"]
+
+    market_df = _market_rows_from_spot(spot_df, cache_df)
+    merged = pd.concat([cache_df, market_df], ignore_index=True)
+    try:
+        _write_cache(merged)
+    except Exception as exc:  # noqa: BLE001
+        return get_cache_summary(), [f"真实行情已获取，但写入本地缓存失败：{exc}"]
+
+    summary = get_cache_summary()
+    return summary, [f"已更新 {len(market_df)} 只 A 股的行情缓存。"]
+
+
+def _find_latest_finance_row(df: pd.DataFrame) -> pd.Series | None:
+    if df is None or df.empty:
+        return None
+    date_columns = [column for column in df.columns if "日期" in str(column) or "报告期" in str(column)]
+    if date_columns:
+        df = df.sort_values(date_columns[0])
+    return df.iloc[-1]
+
+
+def _pick_by_keywords(row: pd.Series, keyword_sets: list[tuple[str, ...]]) -> float | None:
+    for keywords in keyword_sets:
+        for column in row.index:
+            name = str(column)
+            if all(keyword in name for keyword in keywords):
+                value = _to_float(row[column])
+                if value is not None:
+                    return value / 100 if "%" in name or abs(value) > 2 else value
+    return None
+
+
+def _fetch_finance_for_code(code: str) -> tuple[dict[str, float | None], str | None]:
+    try:
+        import akshare as ak  # type: ignore
+
+        df = ak.stock_financial_analysis_indicator(symbol=normalize_code(code), start_year="2020")
+        latest = _find_latest_finance_row(df)
+        if latest is None:
+            return {}, "财务接口返回空数据。"
+
+        return {
+            "ROE": _pick_by_keywords(latest, [("净资产收益率",), ("ROE",)]),
+            "净利率": _pick_by_keywords(latest, [("销售净利率",), ("净利率",)]),
+            "毛利率": _pick_by_keywords(latest, [("销售毛利率",), ("毛利率",)]),
+            "营收增长率": _pick_by_keywords(latest, [("营业收入", "增长"), ("主营业务收入", "增长")]),
+            "净利润增长率": _pick_by_keywords(latest, [("净利润", "增长")]),
+            "资产负债率": _pick_by_keywords(latest, [("资产负债率",)]),
+            "经营现金流/净利润": _pick_by_keywords(latest, [("经营现金流", "净利润"), ("经营活动", "净利润")]),
+        }, None
+    except Exception as exc:  # noqa: BLE001
+        return {}, f"财务接口获取失败：{exc}"
+
+
+def refresh_financial_cache(codes: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """Try to update financial fields for selected codes only."""
+
+    clean_codes = []
+    for code in codes:
+        normalized = normalize_code(code)
+        if normalized and normalized not in clean_codes:
+            clean_codes.append(normalized)
+
+    if not clean_codes:
+        return get_cache_summary(), ["没有可更新的股票代码。"]
+
+    cache_df = _read_cache()
+    warnings: list[str] = []
+    updated = 0
+    rows = cache_df.to_dict("records")
+    code_to_index = {normalize_code(row.get("股票代码")): idx for idx, row in enumerate(rows)}
+
+    for code in clean_codes:
+        finance, error = _fetch_finance_for_code(code)
+        useful = {key: value for key, value in finance.items() if value is not None}
+        if not useful:
+            warnings.append(f"{code} 财务数据暂时没有更新成功。{error or ''}".strip())
+            continue
+
+        if code not in code_to_index:
+            rows.append({column: None for column in CACHE_COLUMNS})
+            code_to_index[code] = len(rows) - 1
+
+        row = rows[code_to_index[code]]
+        row["股票代码"] = code
+        row["股票名称"] = row.get("股票名称") or code
+        row["所属行业"] = row.get("所属行业") or "未知"
+        for column, value in useful.items():
+            row[column] = value
+        row["数据来源"] = row.get("数据来源") or "本地缓存"
+        row["更新时间"] = _now_text()
+        updated += 1
+
+    try:
+        _write_cache(pd.DataFrame(rows))
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"财务数据已获取，但写入本地缓存失败：{exc}")
+
+    if updated:
+        warnings.insert(0, f"已尝试更新 {updated} 只持仓的财务缓存。")
+    return get_cache_summary(), warnings
+
+
 def get_stock_metrics(codes: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """Get stock data with AkShare first, then local CSV cache.
 
-    Returns a tuple of rows and friendly warning messages. Every requested code
-    returns one row, including a "数据缺失" row when no source has data.
+    Every requested code returns one row, including a "数据缺失" row when no
+    source has data. Missing data never raises an exception to the UI.
     """
 
     clean_codes = []
@@ -217,7 +349,8 @@ def get_stock_metrics(codes: list[str]) -> tuple[list[dict[str, Any]], list[str]
             source = output_row.get("数据来源") or "本地缓存"
             output_row["数据来源"] = "示例数据" if source == "示例数据" else "本地缓存"
             output_row["市场数据来源"] = output_row["数据来源"]
-            output_row["财务数据来源"] = output_row["数据来源"]
+            has_finance = any(_to_float(output_row.get(column)) is not None for column in FINANCIAL_COLUMNS)
+            output_row["财务数据来源"] = output_row["数据来源"] if has_finance else "数据缺失"
             output_row["错误信息"] = ""
 
         if output_row is None:

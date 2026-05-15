@@ -5,11 +5,19 @@ import pandas as pd
 import streamlit as st
 
 from analyzer import analyze_portfolio
-from data_fetcher import get_stock_metrics, normalize_code
+from data_fetcher import (
+    get_cache_summary,
+    get_stock_metrics,
+    normalize_code,
+    refresh_financial_cache,
+    refresh_market_cache,
+)
 from report_generator import generate_txt_report, money, percent
 
 
 APP_TITLE = "家庭投资雷达 Agent"
+DEFAULT_CODES = ["600519", "000001", "300750"]
+DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
@@ -169,6 +177,38 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+with st.expander("数据缓存工具", expanded=False):
+    summary = get_cache_summary()
+    st.caption(
+        f"当前本地缓存约 {summary['count']} 只标的，其中 {summary['finance_count']} 只有财务数据；"
+        f"最近更新时间：{summary['latest_update']}。"
+    )
+    st.caption("普通体检会自动尝试查真实行情；这里的按钮用于手动把缓存变大。接口失败时不会影响页面使用。")
+    cache_col1, cache_col2 = st.columns(2)
+    if cache_col1.button("更新全部 A 股行情缓存", use_container_width=True):
+        with st.spinner("正在拉取全部 A 股行情，可能需要几十秒..."):
+            update_summary, messages = refresh_market_cache()
+        for message in messages:
+            st.info(message)
+        st.success(f"缓存现有 {update_summary['count']} 只标的。")
+
+    current_input_codes = []
+    for idx in range(st.session_state.holding_rows):
+        code_value = st.session_state.get(
+            f"code_{idx}",
+            DEFAULT_CODES[idx] if idx < len(DEFAULT_CODES) else "",
+        )
+        normalized_code = normalize_code(str(code_value))
+        if normalized_code:
+            current_input_codes.append(normalized_code)
+
+    if cache_col2.button("更新当前持仓财务缓存", use_container_width=True):
+        with st.spinner("正在尝试更新当前填写代码的财务数据..."):
+            update_summary, messages = refresh_financial_cache(current_input_codes)
+        for message in messages:
+            st.info(message)
+        st.success(f"缓存现有 {update_summary['count']} 只标的，{update_summary['finance_count']} 只有财务数据。")
+
 if st.button("增加一行持仓", use_container_width=True):
     st.session_state.holding_rows += 1
     st.rerun()
@@ -181,22 +221,19 @@ with st.form("family_risk_form"):
     st.markdown('<p class="mini">默认 3 行。只填写有持仓的股票或基金，金额填 0 的行会自动忽略。</p>', unsafe_allow_html=True)
 
     raw_holdings: list[dict[str, float | str]] = []
-    default_codes = ["600519", "000001", "300750"]
-    default_amounts = [20000.0, 10000.0, 0.0]
-
     for index in range(st.session_state.holding_rows):
         with st.container(border=True):
             st.markdown(f"**第 {index + 1} 只持仓**")
             code = st.text_input(
                 "股票/基金代码",
-                value=default_codes[index] if index < len(default_codes) else "",
+                value=DEFAULT_CODES[index] if index < len(DEFAULT_CODES) else "",
                 key=f"code_{index}",
-                placeholder="例如 600519",
+                placeholder="例如 600519，支持任意 A 股代码",
             )
             amount = st.number_input(
                 "持仓金额（元）",
                 min_value=0.0,
-                value=default_amounts[index] if index < len(default_amounts) else 0.0,
+                value=DEFAULT_AMOUNTS[index] if index < len(DEFAULT_AMOUNTS) else 0.0,
                 step=1000.0,
                 key=f"amount_{index}",
             )
