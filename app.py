@@ -12,6 +12,7 @@ from data_fetcher import (
     refresh_market_cache,
 )
 from report_generator import generate_txt_report, money, percent
+from ai_report import generate_ai_report, is_ai_available
 
 APP_TITLE = "家庭投资雷达 Agent"
 DEFAULT_CODES = ["600519", "000001", "300750"]
@@ -115,6 +116,15 @@ div[data-testid="stMetricValue"] {
     color: #64748b;
     font-size: 0.92rem !important;
 }
+.ai-card {
+    border: 1.5px solid #c7d2fe;
+    background: #f5f3ff;
+    border-radius: 14px;
+    padding: 1rem 1.1rem;
+    margin: 0.75rem 0;
+    color: #1e1b4b;
+    line-height: 1.8;
+}
 @media (max-width: 640px) {
     html, body, [class*="css"] {
         font-size: 19px;
@@ -143,6 +153,14 @@ div[data-testid="stMetricValue"] {
 def init_state() -> None:
     if "holding_rows" not in st.session_state:
         st.session_state.holding_rows = 3
+    # AI 报告缓存，避免重复调用
+    if "ai_report_text" not in st.session_state:
+        st.session_state.ai_report_text = None
+    if "ai_report_error" not in st.session_state:
+        st.session_state.ai_report_error = None
+    # 体检结果变化时需要清空旧 AI 报告
+    if "last_analysis_score" not in st.session_state:
+        st.session_state.last_analysis_score = None
 
 
 def clean_holdings(raw_rows: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
@@ -281,6 +299,13 @@ if submitted:
         st.error("体检时遇到问题，但页面没有崩。请稍后重试，或检查 stock_metrics.csv 是否存在。")
         st.stop()
 
+    # 体检结果变化时清空旧的 AI 报告缓存
+    current_score = analysis.get("score")
+    if current_score != st.session_state.last_analysis_score:
+        st.session_state.ai_report_text = None
+        st.session_state.ai_report_error = None
+        st.session_state.last_analysis_score = current_score
+
     for warning in fetch_warnings:
         st.warning(warning)
 
@@ -308,14 +333,14 @@ if submitted:
 
     st.metric("行业集中度", f"{analysis['top_industry']} {percent(analysis['industry_concentration'])}")
 
-    # ── 3. 主要风险提示（首屏核心，始终展开）────────────────────────
+    # ── 3. 主要风险提示（始终展开）──────────────────────────────────
     st.subheader("主要风险提示")
     st.markdown('<div class="plain-card">', unsafe_allow_html=True)
     for note in analysis["risk_notes"]:
         st.write(f"- {note}")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── 4. 给家人的建议（首屏核心，始终展开）────────────────────────
+    # ── 4. 给家人的建议（始终展开）──────────────────────────────────
     st.subheader("给家人的建议")
     st.markdown('<div class="plain-card">', unsafe_allow_html=True)
     for note in analysis["advice"]:
@@ -324,7 +349,49 @@ if submitted:
 
     st.warning("本工具只做风险体检，不构成投资建议；不预测涨跌，不自动交易，不承诺收益。")
 
-    # ── 5. 资产配置饼图（默认收起）──────────────────────────────────
+    # ── 5. AI 风险说明（按钮触发，绝不自动调用）─────────────────────
+    st.subheader("AI 风险说明（给父母看）")
+
+    if not is_ai_available():
+        # Key 未配置：静默提示，其他功能完全不受影响
+        st.caption("未配置 AI 分析功能。如需启用，请在 Streamlit Cloud Secrets 中配置 DEEPSEEK_API_KEY。")
+    else:
+        if st.session_state.ai_report_text:
+            # 已有缓存结果，直接展示，不重复调用
+            st.markdown(
+                f'<div class="ai-card">{st.session_state.ai_report_text}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption("以上为 AI 生成的风险说明，仅供家庭参考，不构成投资建议。市场有风险，投资需谨慎。")
+            if st.button("重新生成 AI 风险说明", use_container_width=True):
+                st.session_state.ai_report_text = None
+                st.session_state.ai_report_error = None
+                st.rerun()
+
+        elif st.session_state.ai_report_error:
+            # 上次调用失败，显示错误提示和重试按钮
+            st.warning(st.session_state.ai_report_error)
+            if st.button("重试 AI 风险说明", use_container_width=True):
+                st.session_state.ai_report_error = None
+                st.rerun()
+
+        else:
+            # 首次：显示按钮，等待用户主动点击
+            st.caption("点击下方按钮，AI 会用通俗语言解释这份体检结果，方便发给父母阅读。")
+            if st.button("生成 AI 风险说明", use_container_width=True):
+                with st.spinner("AI 正在生成说明，大约需要几秒钟..."):
+                    report_text, error_msg = generate_ai_report(analysis)
+                if report_text:
+                    st.session_state.ai_report_text = report_text
+                    st.session_state.ai_report_error = None
+                else:
+                    st.session_state.ai_report_text = None
+                    st.session_state.ai_report_error = (
+                        error_msg or "AI 分析暂时不可用，基础风险体检结果不受影响。"
+                    )
+                st.rerun()
+
+    # ── 6. 资产配置饼图（默认收起）──────────────────────────────────
     with st.expander("查看资产配置饼图", expanded=False):
         if analysis["total_assets"] <= 0:
             st.info("现金和持仓都为 0，暂时没有可画的资产配置图。")
@@ -341,13 +408,13 @@ if submitted:
             ax.axis("equal")
             st.pyplot(fig, clear_figure=True)
 
-    # ── 6. 四项得分（默认收起）──────────────────────────────────────
+    # ── 7. 四项得分（默认收起）──────────────────────────────────────
     with st.expander("查看四项得分明细", expanded=False):
         score_cols = st.columns(2)
         for idx, (name, score) in enumerate(analysis["module_scores"].items()):
             score_cols[idx % 2].metric(name, f"{score:.0f}/100")
 
-    # ── 7. 持仓明细表格（默认收起）─────────────────────────────────
+    # ── 8. 持仓明细表格（默认收起）─────────────────────────────────
     with st.expander("查看持仓明细表格", expanded=False):
         detail_rows = []
         for item in analysis["stock_results"]:
@@ -364,7 +431,7 @@ if submitted:
             )
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
-    # ── 8. 每只持仓详情卡（标题含风险等级，详情在 expander 内）─────
+    # ── 9. 每只持仓详情卡 ────────────────────────────────────────────
     st.subheader("每只持仓怎么看")
     for item in analysis["stock_results"]:
         st.markdown(
@@ -390,7 +457,7 @@ if submitted:
             for note in item["position_notes"]:
                 st.write(f"- {note}")
 
-    # ── 9. 下载报告 ──────────────────────────────────────────────────
+    # ── 10. 下载报告 ─────────────────────────────────────────────────
     report_text = generate_txt_report(analysis)
     st.download_button(
         "下载 txt 报告",

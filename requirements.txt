@@ -4,3 +4,4 @@ numpy
 matplotlib
 akshare
 requests
+openai

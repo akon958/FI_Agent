@@ -7,10 +7,58 @@
 - 输入家庭现金、风险承受能力、多只股票或基金持仓。
 - 默认支持 3 行持仓，可以继续增加持仓行。
 - 页面默认优先读取 `stock_metrics.csv`，不会在 Streamlit Cloud 每次启动时自动抓全市场行情。
-- 可以在“高级选项：数据缓存工具”里手动更新当前持仓数据。
-- “更新全部 A 股行情缓存”也放在高级选项里，接口可能失败，失败时页面会继续使用本地缓存。
-- 如果本地缓存没有该股票，会显示“数据缺失”，不会强行给绿色评级。
+- 可以在"高级选项：数据缓存工具"里手动更新当前持仓数据。
+- "更新全部 A 股行情缓存"也放在高级选项里，接口可能失败，失败时页面会继续使用本地缓存。
+- 如果本地缓存没有该股票，会显示"数据缺失"，不会强行给绿色评级。
 - 输出综合评分、红黄绿风险等级、数据状态、家庭仓位、资产配置饼图、持仓明细、风险提示、家人建议和 txt 报告。
+- 可选接入 DeepSeek AI，点击"生成 AI 风险说明"按钮后，AI 会用通俗语言把体检结果解释给父母听。
+
+## AI 风险说明功能（可选）
+
+本工具支持接入 DeepSeek API，生成适合父母阅读的通俗风险说明。
+
+**AI 功能的原则：**
+- 不荐股，不预测涨跌，不给出买入、卖出、加仓、减仓指令
+- 只做家庭投资风险体检说明
+- 语言口语化，适合没有金融背景的父母阅读
+- 页面启动时不会自动调用，只有用户点击按钮才会请求 AI
+- 未配置 API Key 时，页面显示"未配置 AI 分析功能"，其他体检功能完全正常
+
+### 如何在 Streamlit Cloud 配置 DEEPSEEK_API_KEY
+
+1. 打开你的 Streamlit Cloud 应用管理页面：
+   [https://share.streamlit.io/](https://share.streamlit.io/)
+
+2. 找到你的 `Family_Investment_Agent` 应用，点击右侧的 **⋮（三个点）** 菜单，选择 **Settings**。
+
+3. 在弹出页面中点击左侧的 **Secrets** 选项卡。
+
+4. 在文本框中输入以下内容（替换为你自己的 Key）：
+
+   ```toml
+   DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+
+5. 点击 **Save** 保存。Streamlit Cloud 会自动重启应用，Key 生效。
+
+**注意事项：**
+- API Key 只保存在 Streamlit Secrets 中，不要写进任何代码文件或提交到 GitHub。
+- 如果不需要 AI 功能，不配置 Key 即可，体检功能完全不受影响。
+- DeepSeek API Key 可以在 [https://platform.deepseek.com/](https://platform.deepseek.com/) 注册后获取。
+
+### 如何在本地使用 AI 功能
+
+在项目根目录创建 `.streamlit/secrets.toml` 文件（此文件已在 `.gitignore` 中，不会被提交到 GitHub）：
+
+```toml
+DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+然后正常启动：
+
+```bash
+streamlit run app.py
+```
 
 ## 重要说明
 
@@ -23,14 +71,15 @@
 
 ## 项目结构
 
-```text
+```
 Family_Investment_Agent/
-├── app.py
-├── analyzer.py
-├── data_fetcher.py
-├── report_generator.py
-├── update_cache.py
-├── stock_metrics.csv
+├── app.py               # 主页面
+├── analyzer.py          # 风险分析逻辑
+├── data_fetcher.py      # 数据读取与缓存
+├── report_generator.py  # txt 报告生成
+├── ai_report.py         # DeepSeek AI 风险说明（新增）
+├── update_cache.py      # 本地更新缓存脚本
+├── stock_metrics.csv    # 本地行情缓存
 ├── requirements.txt
 └── README.md
 ```
@@ -39,31 +88,31 @@ Family_Investment_Agent/
 
 进入项目目录：
 
-```powershell
+```
 cd C:\Users\Administrator\Desktop\FI_Agent\Family_Investment_Agent
 ```
 
 安装依赖：
 
-```powershell
+```
 pip install -r requirements.txt
 ```
 
 启动网页：
 
-```powershell
+```
 streamlit run app.py
 ```
 
 浏览器打开：
 
-```text
+```
 http://localhost:8501
 ```
 
 如果 Windows 上 `pip` 或 `streamlit` 命令不可用，可以使用：
 
-```powershell
+```
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
@@ -72,7 +121,7 @@ python -m streamlit run app.py
 
 在上传 GitHub 前，建议先在本地运行一次：
 
-```powershell
+```
 python update_cache.py
 ```
 
@@ -91,7 +140,7 @@ python update_cache.py
 
 如果 AkShare 接口失败，脚本会提示：
 
-```text
+```
 实时行情更新失败，已使用本地缓存数据。
 ```
 
@@ -101,7 +150,7 @@ python update_cache.py
 
 手机和电脑连接同一个 Wi-Fi。启动 Streamlit 后，终端会显示类似下面的地址：
 
-```text
+```
 Network URL: http://192.168.x.x:8501
 ```
 
@@ -113,36 +162,38 @@ Network URL: http://192.168.x.x:8501
 2. 点击右上角 `+`，选择 `New repository`。
 3. Repository name 填：
 
-```text
-Family_Investment_Agent
-```
+   ```
+   Family_Investment_Agent
+   ```
 
 4. 选择 `Public`，然后点击 `Create repository`。
 5. 上传本项目根目录中的文件：
 
-```text
-app.py
-requirements.txt
-analyzer.py
-data_fetcher.py
-report_generator.py
-update_cache.py
-stock_metrics.csv
-README.md
-```
+   ```
+   app.py
+   requirements.txt
+   analyzer.py
+   data_fetcher.py
+   report_generator.py
+   ai_report.py
+   update_cache.py
+   stock_metrics.csv
+   README.md
+   ```
 
 6. 打开 [Streamlit Community Cloud](https://share.streamlit.io/) 并登录。
 7. 点击 `New app`。
 8. 选择刚创建的 GitHub 仓库。
 9. 部署参数填写：
 
-```text
-Repository: 你的用户名/Family_Investment_Agent
-Branch: main
-Main file path: app.py
-```
+   ```
+   Repository: 你的用户名/Family_Investment_Agent
+   Branch: main
+   Main file path: app.py
+   ```
 
 10. 点击 `Deploy`。
+11. 部署完成后，按照上方"如何在 Streamlit Cloud 配置 DEEPSEEK_API_KEY"的步骤配置 API Key（可选）。
 
 ## 上传 GitHub 后的数据逻辑
 
