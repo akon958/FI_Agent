@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -58,6 +59,52 @@ COLUMN_ALIASES = {
     "量比": ["量比"],
     "振幅": ["振幅", "振幅%", "amplitude"],
 }
+
+# AkShare 两个财务接口的列名别名映射
+# stock_financial_abstract 通常返回百分比形式（15.23 表示 15.23%）
+# stock_a_lg_indicator 通常也是百分比形式
+FINANCIAL_ALIASES: dict[str, list[str]] = {
+    "ROE": [
+        "净资产收益率", "加权净资产收益率", "摊薄净资产收益率",
+        "roe", "ROE",
+    ],
+    "净利率": [
+        "销售净利率", "净利润率", "净利率",
+        "net_profit_margin", "净利润/营业收入",
+    ],
+    "毛利率": [
+        "销售毛利率", "毛利率",
+        "gross_profit_margin", "gross_margin",
+    ],
+    "营收增长率": [
+        "营业总收入同比增长率", "营业收入增长率", "营收增长率",
+        "revenue_growth_yoy", "revenue_yoy", "营收同比增长率",
+    ],
+    "净利润增长率": [
+        "净利润同比增长率", "归母净利润增长率", "净利润增长率",
+        "net_profit_growth_yoy", "profit_yoy", "净利润同比",
+    ],
+    "资产负债率": [
+        "资产负债率", "debt_to_assets", "负债率",
+    ],
+    "经营现金流/净利润": [
+        "经营活动产生的现金流量净额/净利润",
+        "经营现金流/净利润",
+        "经营性现金流/净利润",
+        "cash_profit_ratio",
+        "经营活动现金流量/净利润",
+    ],
+}
+
+# 以下字段 AkShare 返回时为百分比数字（如 15.23 表示 15.23%），需要 /100 转换为小数
+# analyzer.py 里用的是小数形式（0.15 表示 15%）
+# 判断逻辑：|值| > 1 时认为是百分比形式，自动 /100
+PCT_THRESHOLD_FIELDS = {"ROE", "净利率", "毛利率", "资产负债率"}
+
+# 增长率也是百分比，但可能超过 100%（高速增长），用更高阈值 10
+GROWTH_THRESHOLD_FIELDS = {"营收增长率", "净利润增长率"}
+
+# 经营现金流/净利润是比率，不需要转换
 
 
 def normalize_code(code: Any) -> str:
@@ -223,14 +270,146 @@ def save_cache(output: Any) -> None:
     temp_file.replace(CACHE_FILE)
 
 
+# ── 财务数据抓取 ─────────────────────────────────────────────────────────────
+
+
+def _normalize_financial_value(field: str, value: float) -> float:
+    """AkShare 财务接口多数以百分比形式返回（15.23 = 15.23%），
+    analyst.py 期望小数形式（0.1523）。
+    根据字段和数值大小判断是否需要 /100。
+    经营现金流/净利润是比率，不处理。
+    """
+    if field in PCT_THRESHOLD_FIELDS:
+        if abs(value) > 1:          # 绝对值 > 1，判断为百分比形式
+            return value / 100.0
+    elif field in GROWTH_THRESHOLD_FIELDS:
+        if abs(value) > 10:         # 增长率超 1000% 极少见，> 10 视为百分比
+            return value / 100.0
+    return value
+
+
+def _extract_from_df(df: Any) -> dict[str, float]:
+    """从财务 DataFrame 取最新一行，按 FINANCIAL_ALIASES 映射目标字段。"""
+    result: dict[str, float] = {}
+    if not is_valid_frame(df):
+        return result
+
+    # 取第一行（各接口通常按时间倒序排列）
+    for _, row in df.iterrows():
+        for target, aliases in FINANCIAL_ALIASES.items():
+            if target in result:
+                continue
+            raw = first_present(row, aliases)
+            if raw is None:
+                continue
+            val = to_float(raw)
+            if val is None:
+                continue
+            result[target] = _normalize_financial_value(target, val)
+        if len(result) == len(FINANCIAL_COLUMNS):
+            break   # 所有字段已找到，不必继续扫行
+
+    return result
+
+
+def _fetch_financial_abstract(ak: Any, code: str) -> dict[str, float]:
+    """接口 1：ak.stock_financial_abstract(symbol=code)"""
+    df = ak.stock_financial_abstract(symbol=code)
+    return _extract_from_df(df)
+
+
+def _fetch_lg_indicator(ak: Any, code: str) -> dict[str, float]:
+    """接口 2：ak.stock_a_lg_indicator(symbol=code)"""
+    df = ak.stock_a_lg_indicator(symbol=code)
+    return _extract_from_df(df)
+
+
+def fetch_financial_for_code(ak: Any, code: str) -> dict[str, float]:
+    """按优先级尝试两个财务接口，合并结果，任一接口失败均静默跳过。"""
+    result: dict[str, float] = {}
+
+    # 接口 1
+    try:
+        data = _fetch_financial_abstract(ak, code)
+        result.update(data)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 接口 2：补全接口 1 未覆盖的字段
+    missing = [f for f in FINANCIAL_COLUMNS if f not in result]
+    if missing:
+        try:
+            data = _fetch_lg_indicator(ak, code)
+            for field in missing:
+                if field in data:
+                    result[field] = data[field]
+        except Exception:  # noqa: BLE001
+            pass
+
+    return result
+
+
+def enrich_with_financial(ak: Any, df: Any) -> Any:
+    """逐只抓取财务数据并回填到 DataFrame 的 FINANCIAL_COLUMNS 列。"""
+    codes: list[str] = df["代码"].tolist()
+    total = len(codes)
+    print(f"\n开始抓取财务数据，共 {total} 只股票...", flush=True)
+
+    # 用列表缓存，避免在大 DataFrame 上反复 loc 定位（性能差）
+    fin_cache: dict[str, dict[str, float]] = {}
+
+    success = 0
+    fail = 0
+
+    for i, code in enumerate(codes, 1):
+        if i % 100 == 0 or i == total:
+            print(
+                f"  财务进度：{i}/{total}  成功 {success} 只  跳过 {fail} 只",
+                flush=True,
+            )
+
+        try:
+            fin = fetch_financial_for_code(ak, code)
+            if fin:
+                fin_cache[code] = fin
+                success += 1
+            else:
+                fail += 1
+        except Exception:  # noqa: BLE001
+            fail += 1
+
+        # 小间隔，避免短时间内请求过于密集
+        time.sleep(0.05)
+
+    # 批量写回 DataFrame
+    for col in FINANCIAL_COLUMNS:
+        new_vals = []
+        for code in codes:
+            fin = fin_cache.get(code, {})
+            new_vals.append(fin.get(col))   # None 表示未获取到
+        # 只覆盖成功获取到的值，None 保持原样（来自旧缓存的财务数据仍然有效）
+        existing = df[col].tolist()
+        merged = [new if new is not None else old for new, old in zip(new_vals, existing)]
+        df[col] = merged
+
+    print(
+        f"财务数据抓取完成：成功 {success} 只，跳过/失败 {fail} 只。\n",
+        flush=True,
+    )
+    return df
+
+
+# ── 主流程 ────────────────────────────────────────────────────────────────────
+
+
 def main() -> None:
     print("正在启动 update_cache.py...", flush=True)
 
     global pd
     try:
-        import pandas as pandas  # type: ignore
+        import pandas as pandas_mod  # type: ignore
 
-        pd = pandas
+        pd = pandas_mod
     except Exception as exc:  # noqa: BLE001
         print(f"更新失败：无法导入 pandas。请先运行 pip install -r requirements.txt。原因：{exc}", flush=True)
         return
@@ -241,6 +420,7 @@ def main() -> None:
         print(f"更新失败：无法导入 akshare。请先运行 pip install -r requirements.txt。原因：{exc}", flush=True)
         return
 
+    # ── 第一步：抓行情 ────────────────────────────────────────────────────────
     spot_df = fetch_spot_data(ak)
     if not is_valid_frame(spot_df):
         return
@@ -257,12 +437,28 @@ def main() -> None:
             print("更新失败：生成的缓存数据为空，没有覆盖 stock_metrics.csv。", flush=True)
             return
 
+    except Exception as exc:  # noqa: BLE001
+        print(f"更新失败：处理行情数据时出错。原因：{exc}", flush=True)
+        return
+
+    print(f"行情数据处理完成，共 {len(output)} 只股票。", flush=True)
+
+    # ── 第二步：抓财务数据并回填 ─────────────────────────────────────────────
+    output = enrich_with_financial(ak, output)
+
+    # ── 第三步：保存 ──────────────────────────────────────────────────────────
+    try:
         save_cache(output)
     except Exception as exc:  # noqa: BLE001
         print(f"更新失败：保存 stock_metrics.csv 时出错，没有覆盖原文件。原因：{exc}", flush=True)
         return
 
-    print(f"已更新 stock_metrics.csv，共 {len(output)} 条 A 股数据。", flush=True)
+    fin_count = int(output[FINANCIAL_COLUMNS].notna().any(axis=1).sum())
+    print(
+        f"已更新 stock_metrics.csv，共 {len(output)} 只 A 股，"
+        f"其中 {fin_count} 只含财务数据。",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
