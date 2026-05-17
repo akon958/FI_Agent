@@ -5,15 +5,9 @@ import pandas as pd
 import streamlit as st
 
 from analyzer import analyze_portfolio
-from data_fetcher import get_cache_summary
-from data_fetcher import get_stock_metrics
-from data_fetcher import normalize_code
-from data_fetcher import refresh_current_holdings_cache
-from data_fetcher import refresh_market_cache
+from data_fetcher import get_cache_summary, get_stock_metrics, normalize_code, refresh_current_holdings_cache, refresh_market_cache
 from ai_report import generate_parent_friendly_report
-from report_generator import generate_txt_report
-from report_generator import money
-from report_generator import percent
+from report_generator import generate_txt_report, money, percent
 
 
 APP_TITLE = "家庭投资雷达 Agent"
@@ -252,7 +246,7 @@ with st.form("family_risk_form"):
 
 show_disclaimer()
 
-if not submitted:
+if not submitted and "analysis" not in st.session_state:
     st.markdown(
         """
         <div class="risk-card green"><h3>绿色：风险较低</h3><p>不是说一定赚钱，只是当前看起来没那么紧张。</p></div>
