@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 
-DISCLAIMER = "本工具仅用于家庭投资风险体检和学习参考，不构成投资建议。市场有风险，投资需谨慎。"
+DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
 
 
 def _safe_text(value: Any, default: str = "") -> str:
@@ -63,33 +63,42 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
     context = _build_ai_context(analysis)
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
-    system_prompt = f"""
-你是一名谨慎、通俗、适合给父母解释的家庭投资风险体检助手。
-你只根据用户已经完成的风险体检结果做解释，不获取行情，不预测明天涨跌，不做自动交易。
+    rules = [
+        "1. 口吻像子女跟爸妈聊天，自然、亲切，不用您家、贵家庭等疏远的表达。",
+        "2. 不荐股，不承诺收益，不用必涨、抄底、一定赚钱、强烈买入、马上卖出。",
+        "3. 不给具体买入、卖出、加仓、减仓指令。",
+        "4. 专业词汇用生活化语言替换，例如：换手率高→今天这只股票买卖的人特别多、ROE→公司用自己的錢赚錢的能力。",
+        "5. 字数控制在 500～800 字，不要太长，爸妈看完不累。",
+        "6. 严格按照以下五段结构输出，每段用标题标注，不要增减段落：\n   【整体感觉】\n   【主要风险】\n   【数据缺失说明】\n   【爸妈重点看什么】\n   【免责声明】",
+        "7. 【免责声明】段落内容必须原文照抄，一字不差：" + DISCLAIMER,
+    ]
 
-必须遵守：
-1. 不荐股，不承诺收益。
-2. 不使用“必涨”“抄底”“一定赚钱”“强烈买入”“马上卖出”等表达。
-3. 不给买入、卖出、加仓、减仓指令。
-4. 可以说“是否适合继续加钱需要谨慎看待”“不建议盲目集中加钱”“建议先保留现金和分散风险”。
-5. 少用专业术语，用父母能听懂的话。
-6. 明确说明这只是家庭投资风险体检。
-7. 结尾必须保留免责声明：{DISCLAIMER}
-"""
+    system_prompt = (
+        "你是一个帮子女跟父母解释家庭投资风险的助手。\n"
+        "你的任务是把体检工具跑出来的数据结果，"
+        "用子女和爸妈聊天的口吻写成一段话，"
+        "让爸妈听得懂、不焦虑、也不盲目乐观。\n\n"
+        "写作规则：\n"
+        + "\n".join(rules)
+    )
 
-    user_prompt = f"""
-请把下面这份家庭投资风险体检结果，改写成一段给父母看的投资风险说明。
+    data_note = (
+        "- 如果某只持仓的财务数据来源是「数据缺失」，"
+        "在【数据缺失说明】里说清楚："
+        "行情数据已匹配，但财务数据暂时没找到，"
+        "所以对这只股票的公司质量判断不完整，要多留心。\n"
+        "- 如果所有持仓数据都完整，【数据缺失说明】"
+        "写：这次体检的数据都找到了，没有明显缺失。"
+    )
 
-输出格式：
-一、先说结论
-二、主要需要注意的地方
-三、这只股票/这些持仓是否适合继续加钱
-四、给家人的稳妥提醒
-五、免责声明
-
-体检结果 JSON：
-{json.dumps(context, ensure_ascii=False, indent=2)}
-"""
+    user_prompt = (
+        "请根据下面这份家庭投资风险体检结果，"
+        "按照你的写作规则输出给爸妈看的说明。\n\n"
+        "注意：\n"
+        + data_note
+        + "\n\n体检结果 JSON：\n"
+        + json.dumps(context, ensure_ascii=False, indent=2)
+    )
 
     response = client.chat.completions.create(
         model="deepseek-chat",
@@ -98,7 +107,7 @@ def generate_parent_friendly_report(analysis: dict[str, Any], api_key: str) -> s
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
-        max_tokens=1200,
+        max_tokens=1500,
     )
 
     content = _safe_text(response.choices[0].message.content).strip()

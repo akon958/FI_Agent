@@ -339,7 +339,8 @@ if "analysis" in st.session_state:
                 "金额": money(item["amount"]),
                 "占比": percent(item["single_ratio"]),
                 "行业": item["industry"],
-                "数据": item["data_source"],
+                "行情": "已匹配" if item["market_source"] != "数据缺失" else "缺失",
+                "财务": "已匹配" if item["finance_source"] != "数据缺失" else "暂缺",
                 "风险": item["level"],
             }
         )
@@ -354,7 +355,7 @@ if "analysis" in st.session_state:
             <p>公司底子：{item['financial_text']}</p>
             <p>交易热度：{item['heat_text']}</p>
             <p>仓位提醒：{'；'.join(item['position_notes'])}</p>
-            <p class="mini">数据来源：行情 {item['market_source']}；财务 {item['finance_source']}</p>
+            <p class="mini">行情数据：{'已匹配' if item['market_source'] != '数据缺失' else '缺失'}｜财务数据：{'已匹配' if item['finance_source'] != '数据缺失' else '暂缺'}</p>
             </div>
             """,
             unsafe_allow_html=True,
