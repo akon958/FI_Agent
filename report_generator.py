@@ -61,3 +61,22 @@ def generate_txt_report(analysis: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def generate_ai_txt_report(ai_text: str, analysis: dict[str, Any]) -> str:
+    """Wrap the DeepSeek AI text with a structured header for download / agent use."""
+    stocks_summary = "、".join(
+        f"{item['code']} {item['name']}" for item in analysis.get("stock_results", [])
+    )
+    lines = [
+        "家庭投资助手 · AI 通俗说明",
+        "=" * 44,
+        f"体检时间：{analysis.get('analysis_time', '')}",
+        f"持仓标的：{stocks_summary or '未知'}",
+        f"综合评分：{analysis.get('score', 0)}/100　风险等级：{analysis.get('level', '')}（{analysis.get('level_text', '')}）",
+        "生成方式：DeepSeek · 供家人阅读，不构成投资建议",
+        "=" * 44,
+        "",
+        ai_text,
+    ]
+    return "\n".join(lines)
