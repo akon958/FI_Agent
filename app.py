@@ -10,12 +10,15 @@ import streamlit as st
 
 from analyzer import analyze_portfolio
 from agent import run_family_risk_agent
-from ai_report import (
-    generate_agent_report,
-    generate_parent_friendly_report,
-    answer_followup_question,
-    FOLLOWUP_QUESTIONS,
-)
+from ai_report import generate_agent_report, generate_parent_friendly_report
+try:
+    from ai_report import answer_followup_question, FOLLOWUP_QUESTIONS
+except ImportError:
+    FOLLOWUP_QUESTIONS: list[str] = []
+
+    def answer_followup_question(ctx: dict, question: str) -> str:  # type: ignore[misc]
+        return "追问功能需要重新部署最新版本。\n\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+
 from data_fetcher import (
     get_cache_summary,
     get_stock_metrics,
