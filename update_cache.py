@@ -188,20 +188,44 @@ def save_cache(df: Any, path: Path | None = None) -> None:
 
 # ── 行情抓取 ──────────────────────────────────────────────────────────────────
 
+_NETWORK_KEYWORDS = (
+    "SSL", "ssl", "Connection", "Timeout", "timeout",
+    "RemoteDisconnected", "reset", "aborted", "EOF",
+    "Max retries", "ProxyError", "ConnectError",
+)
+
+
+def _is_network_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}"
+    return any(k in text for k in _NETWORK_KEYWORDS)
+
+
 def fetch_market(
     label: str,
     fetcher: Callable[[], Any],
+    retries: int = 3,
 ) -> Any | None:
-    try:
-        df = fetcher()
-    except Exception as exc:  # noqa: BLE001
-        print(f"{label} 获取失败：{exc}", flush=True)
-        return None
-    if not is_valid_frame(df):
-        print(f"{label} 返回空数据。", flush=True)
-        return None
-    print(f"{label} 获取成功，共 {len(df)} 条", flush=True)
-    return df
+    """带重试的接口调用：网络错误自动重试，每次等待时间递增。"""
+    for attempt in range(1, retries + 1):
+        try:
+            df = fetcher()
+        except Exception as exc:  # noqa: BLE001
+            if attempt < retries and _is_network_error(exc):
+                wait = attempt * 4
+                print(
+                    f"{label} 网络错误（第{attempt}/{retries}次），{wait}s 后重试…",
+                    flush=True,
+                )
+                time.sleep(wait)
+                continue
+            print(f"{label} 获取失败：{exc}", flush=True)
+            return None
+        if not is_valid_frame(df):
+            print(f"{label} 返回空数据。", flush=True)
+            return None
+        print(f"{label} 获取成功，共 {len(df)} 条", flush=True)
+        return df
+    return None
 
 
 def fetch_spot_data(ak: Any) -> Any | None:
@@ -589,9 +613,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _apply_ssl_fix() -> None:
+    """国内网络访问东财接口偶发 SSL 解密失败，关闭证书校验可显著提升稳定性。"""
+    try:
+        import ssl
+
+        ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        print(f"  SSL 修复未生效（不影响功能）：{exc}", flush=True)
+    try:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> None:
     args = parse_args()
     print("正在启动 update_cache.py...", flush=True)
+
+    _apply_ssl_fix()
 
     global pd
     try:

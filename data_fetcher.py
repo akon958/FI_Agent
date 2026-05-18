@@ -1,10 +1,63 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
+
+
+# 国内网络访问东财接口偶发 SSL 解密失败，关闭证书校验可显著提升稳定性
+_SSL_FIXED = False
+
+
+def _apply_ssl_fix() -> None:
+    global _SSL_FIXED
+    if _SSL_FIXED:
+        return
+    try:
+        import ssl
+
+        ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:  # noqa: BLE001
+        pass
+    _SSL_FIXED = True
+
+
+_NETWORK_ERROR_KEYWORDS = (
+    "SSL", "ssl", "Connection", "Timeout", "timeout",
+    "RemoteDisconnected", "reset", "aborted", "EOF",
+    "Max retries", "ProxyError", "ConnectError",
+)
+
+
+def _is_network_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}"
+    return any(k in text for k in _NETWORK_ERROR_KEYWORDS)
+
+
+def _retry(func: Callable[[], Any], retries: int = 3, wait: float = 3.0) -> Any:
+    """网络错误时最多重试 retries 次，每次等待时间递增。"""
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return func()
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            if attempt < retries and _is_network_error(exc):
+                time.sleep(wait * attempt)
+                continue
+            raise
+    if last_err is not None:
+        raise last_err
+    return None
 
 
 CACHE_FILE = Path(__file__).with_name("stock_metrics.csv")
@@ -232,12 +285,17 @@ def _cache_to_analyzer_row(row: dict[str, Any] | None, code: str) -> dict[str, A
 
 
 def _fetch_akshare_spot() -> pd.DataFrame | None:
+    _apply_ssl_fix()
     try:
         import akshare as ak  # type: ignore
 
-        spot = ak.stock_zh_a_spot_em()
-        if spot is None or spot.empty or "代码" not in spot.columns:
-            return None
+        def _call() -> pd.DataFrame:
+            df = ak.stock_zh_a_spot_em()
+            if df is None or df.empty or "代码" not in df.columns:
+                raise ValueError("接口返回空数据")
+            return df
+
+        spot = _retry(_call, retries=3, wait=3.0)
         spot["代码"] = spot["代码"].astype(str).map(normalize_code)
         return spot
     except Exception:  # noqa: BLE001
