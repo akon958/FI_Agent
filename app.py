@@ -1343,6 +1343,50 @@ def fmt_market_cap(value: Any) -> str:
     return f"{number / 100000000:.1f} 亿"
 
 
+STOCK_FIELD_ALIASES = {
+    "code": "股票代码",
+    "name": "股票名称",
+    "industry": "所属行业",
+    "price": "最新收盘价",
+    "pct_change": "涨跌幅",
+    "turnover": "成交额",
+    "pe": "市盈率-动态",
+    "pb": "市净率",
+    "turnover_rate": "换手率",
+    "market_cap": "总市值",
+    "float_market_cap": "流通市值",
+    "volume_ratio": "量比",
+    "amplitude": "振幅",
+    "in_out_ratio": "内外盘比例",
+    "roe": "ROE",
+    "net_margin": "净利率",
+    "gross_margin": "毛利率",
+    "revenue_growth": "营收增长率",
+    "profit_growth": "净利润增长率",
+    "debt_ratio": "资产负债率",
+    "cashflow_profit_ratio": "经营现金流/净利润",
+    "data_source": "数据来源",
+    "updated_at": "更新时间",
+}
+
+
+def stock_field(stock: dict[str, Any], field: str) -> Any:
+    value = stock.get(field)
+    if value is not None:
+        return value
+    legacy_name = STOCK_FIELD_ALIASES.get(field)
+    if legacy_name:
+        return stock.get(legacy_name)
+    return None
+
+
+def fmt_ratio(value: Any, default: str = "财务数据暂缺") -> str:
+    number = to_float(value)
+    if number is None:
+        return default
+    return f"{number * 100:.2f}%"
+
+
 def exchange_name(code: str) -> str:
     if code.startswith(("600", "601", "603", "605", "688", "689")):
         return "上海证券交易所"
@@ -1414,10 +1458,9 @@ def stock_header(analysis: dict[str, Any]) -> None:
     first_result = analysis["stock_results"][0]
     code = first_result["code"]
     name = first_result["name"]
-    industry = first_result.get("industry") or stock.get("所属行业") or "行业待补充"
-    change = to_float(stock.get("涨跌幅"))
-    change_amount = to_float(stock.get("最新收盘价"))
-    price = fmt_optional(stock.get("最新收盘价"))
+    industry = first_result.get("industry") or stock_field(stock, "industry") or "行业待补充"
+    change = to_float(stock_field(stock, "pct_change"))
+    price = fmt_optional(stock_field(stock, "price"))
     change_label = "暂无" if change is None else signed_change(change)
     change_cls = change_class(change)
     render_html(
@@ -1438,10 +1481,10 @@ def stock_header(analysis: dict[str, Any]) -> None:
                 <dl class="basic-grid">
                     <div class="kv"><dt>当前股价</dt><dd>{price}</dd></div>
                     <div class="kv"><dt>今日变动</dt><dd class="{change_cls}">{change_label}</dd></div>
-                    <div class="kv"><dt>总市值</dt><dd>{fmt_market_cap(stock.get("总市值"))}</dd></div>
-                    <div class="kv"><dt>市盈率 PE</dt><dd>{fmt_optional(stock.get("市盈率-动态"))}</dd></div>
-                    <div class="kv"><dt>市净率 PB</dt><dd>{fmt_optional(stock.get("市净率"))}</dd></div>
-                    <div class="kv"><dt>股息率</dt><dd>暂无</dd></div>
+                    <div class="kv"><dt>总市值</dt><dd>{fmt_market_cap(stock_field(stock, "market_cap"))}</dd></div>
+                    <div class="kv"><dt>市盈率 PE</dt><dd>{fmt_optional(stock_field(stock, "pe"), default="估值数据暂缺")}</dd></div>
+                    <div class="kv"><dt>市净率 PB</dt><dd>{fmt_optional(stock_field(stock, "pb"), default="估值数据暂缺")}</dd></div>
+                    <div class="kv"><dt>更新时间</dt><dd>{html_escape(stock_field(stock, "updated_at") or "暂无")}</dd></div>
                 </dl>
             </div>
             <div class="spark-card">
@@ -1518,9 +1561,12 @@ def ai_report_block(analysis: dict[str, Any]) -> None:
 def metric_grid(analysis: dict[str, Any]) -> None:
     stock = first_stock()
     metrics = [
-        ("PE", fmt_optional(stock.get("市盈率-动态")), "估值指标，越高越需要解释增长来源"),
-        ("PB", fmt_optional(stock.get("市净率")), "股价相对账面资产的倍数"),
-        ("ROE", fmt_optional((to_float(stock.get("ROE")) or 0) * 100, "%") if to_float(stock.get("ROE")) is not None else "暂无", "公司用自己的钱赚钱的能力"),
+        ("PE", fmt_optional(stock_field(stock, "pe"), default="估值数据暂缺"), "估值指标，越高越需要解释增长来源"),
+        ("PB", fmt_optional(stock_field(stock, "pb"), default="估值数据暂缺"), "股价相对账面资产的倍数"),
+        ("ROE", fmt_ratio(stock_field(stock, "roe")), "公司用自己的钱赚钱的能力"),
+        ("净利率", fmt_ratio(stock_field(stock, "net_margin")), "每卖出100元最终留下多少利润"),
+        ("毛利率", fmt_ratio(stock_field(stock, "gross_margin")), "产品本身的赚钱空间"),
+        ("资产负债率", fmt_ratio(stock_field(stock, "debt_ratio")), "公司借了多少钱相对自己的家底"),
         ("现金比例", percent(analysis["cash_ratio"]), "家庭备用金厚度"),
         ("股票/基金仓位", percent(analysis["stock_ratio"]), "家庭资金暴露在权益资产里的比例"),
         ("单只最大占比", percent(analysis["max_single_ratio"]), "用于判断是否过度集中"),

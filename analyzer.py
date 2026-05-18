@@ -16,6 +16,42 @@ FINANCIAL_COLUMNS = [
     "经营现金流/净利润",
 ]
 
+FINANCIAL_FIELD_ALIASES = {
+    "roe": "ROE",
+    "net_margin": "净利率",
+    "gross_margin": "毛利率",
+    "revenue_growth": "营收增长率",
+    "profit_growth": "净利润增长率",
+    "debt_ratio": "资产负债率",
+    "cashflow_profit_ratio": "经营现金流/净利润",
+}
+
+STOCK_FIELD_ALIASES = {
+    "code": "股票代码",
+    "name": "股票名称",
+    "industry": "所属行业",
+    "price": "最新收盘价",
+    "pct_change": "涨跌幅",
+    "turnover": "成交额",
+    "pe": "市盈率-动态",
+    "pb": "市净率",
+    "turnover_rate": "换手率",
+    "market_cap": "总市值",
+    "float_market_cap": "流通市值",
+    "volume_ratio": "量比",
+    "amplitude": "振幅",
+    "in_out_ratio": "内外盘比例",
+    "roe": "ROE",
+    "net_margin": "净利率",
+    "gross_margin": "毛利率",
+    "revenue_growth": "营收增长率",
+    "profit_growth": "净利润增长率",
+    "debt_ratio": "资产负债率",
+    "cashflow_profit_ratio": "经营现金流/净利润",
+    "data_source": "数据来源",
+    "updated_at": "更新时间",
+}
+
 
 def clamp(value: float, low: float = 0, high: float = 100) -> float:
     return max(low, min(high, value))
@@ -35,6 +71,16 @@ def to_float(value: Any) -> float | None:
         return None
 
 
+def stock_value(stock: dict[str, Any], field: str) -> Any:
+    value = stock.get(field)
+    if value is not None:
+        return value
+    legacy_name = STOCK_FIELD_ALIASES.get(field)
+    if legacy_name:
+        return stock.get(legacy_name)
+    return None
+
+
 def weighted_average(items: list[tuple[float, float]], default: float = 0) -> float:
     total_weight = sum(weight for _, weight in items if weight > 0)
     if total_weight <= 0:
@@ -43,9 +89,12 @@ def weighted_average(items: list[tuple[float, float]], default: float = 0) -> fl
 
 
 def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
-    name = stock.get("股票名称") or stock.get("股票代码")
-    source = stock.get("财务数据来源") or stock.get("数据来源")
-    values = {column: to_float(stock.get(column)) for column in FINANCIAL_COLUMNS}
+    name = stock_value(stock, "name") or stock_value(stock, "code")
+    source = stock.get("财务数据来源") or stock_value(stock, "data_source")
+    values = {
+        standard: to_float(stock_value(stock, standard) if stock_value(stock, standard) is not None else stock.get(legacy))
+        for standard, legacy in FINANCIAL_FIELD_ALIASES.items()
+    }
     missing_count = sum(value is None for value in values.values())
 
     if missing_count >= 5:
@@ -57,13 +106,13 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
             "source": source,
         }
 
-    roe = values["ROE"] or 0
-    net_margin = values["净利率"] or 0
-    gross_margin = values["毛利率"] or 0
-    revenue_growth = values["营收增长率"] or 0
-    profit_growth = values["净利润增长率"] or 0
-    debt_ratio = values["资产负债率"] if values["资产负债率"] is not None else 0.7
-    cash_profit = values["经营现金流/净利润"] if values["经营现金流/净利润"] is not None else 0.5
+    roe = values["roe"] or 0
+    net_margin = values["net_margin"] or 0
+    gross_margin = values["gross_margin"] or 0
+    revenue_growth = values["revenue_growth"] or 0
+    profit_growth = values["profit_growth"] or 0
+    debt_ratio = values["debt_ratio"] if values["debt_ratio"] is not None else 0.7
+    cash_profit = values["cashflow_profit_ratio"] if values["cashflow_profit_ratio"] is not None else 0.5
 
     score = 0.0
     score += clamp(roe / 0.20 * 18)
@@ -110,13 +159,13 @@ def financial_quality(stock: dict[str, Any]) -> dict[str, Any]:
 
 
 def trading_heat(stock: dict[str, Any]) -> dict[str, Any]:
-    name = stock.get("股票名称") or stock.get("股票代码")
-    turnover = to_float(stock.get("换手率"))
-    volume_ratio = to_float(stock.get("量比"))
-    amplitude = to_float(stock.get("振幅"))
-    change = to_float(stock.get("涨跌幅"))
-    amount = to_float(stock.get("成交额"))
-    bid_ask_ratio = to_float(stock.get("内外盘比例"))
+    name = stock_value(stock, "name") or stock_value(stock, "code")
+    turnover = to_float(stock_value(stock, "turnover_rate"))
+    volume_ratio = to_float(stock_value(stock, "volume_ratio"))
+    amplitude = to_float(stock_value(stock, "amplitude"))
+    change = to_float(stock_value(stock, "pct_change"))
+    amount = to_float(stock_value(stock, "turnover"))
+    bid_ask_ratio = to_float(stock_value(stock, "in_out_ratio"))
 
     score = 100.0
     notes: list[str] = []
@@ -257,7 +306,7 @@ def portfolio_position_score(
         notes.append("现金比例低于 10%，建议先补足备用金。")
 
     industry_amounts: dict[str, float] = {}
-    code_to_industry = {stock["股票代码"]: stock.get("所属行业") or "未知" for stock in stocks}
+    code_to_industry = {stock_value(stock, "code"): stock_value(stock, "industry") or "未知" for stock in stocks}
     for holding in holdings:
         industry = code_to_industry.get(holding["code"], "未知")
         industry_amounts[industry] = industry_amounts.get(industry, 0) + holding["amount"]
@@ -336,7 +385,7 @@ def analyze_portfolio(
     holdings: list[dict[str, Any]],
     stocks: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    stock_by_code = {stock["股票代码"]: stock for stock in stocks}
+    stock_by_code = {stock_value(stock, "code"): stock for stock in stocks}
     stock_total = sum(item["amount"] for item in holdings)
     total_assets = cash + stock_total
 
@@ -358,7 +407,7 @@ def analyze_portfolio(
         finance_scores.append((finance["score"], holding["amount"]))
         heat_scores.append((heat["score"], holding["amount"]))
 
-        severe_missing = severe_missing or stock.get("数据来源") == "数据缺失"
+        severe_missing = severe_missing or stock_value(stock, "data_source") == "数据缺失"
         finance_missing = finance_missing or finance["missing"]
         overheated = overheated or heat["overheated"] or heat["score"] < 55
 
@@ -373,13 +422,32 @@ def analyze_portfolio(
         stock_results.append(
             {
                 "code": holding["code"],
-                "name": stock.get("股票名称") or holding["code"],
-                "industry": stock.get("所属行业") or "未知",
+                "name": stock_value(stock, "name") or holding["code"],
+                "industry": stock_value(stock, "industry") or "未知",
                 "amount": holding["amount"],
                 "single_ratio": single_ratio,
-                "data_source": stock.get("数据来源", "数据缺失"),
-                "market_source": stock.get("市场数据来源", stock.get("数据来源", "数据缺失")),
-                "finance_source": stock.get("财务数据来源", stock.get("数据来源", "数据缺失")),
+                "data_source": stock_value(stock, "data_source") or "数据缺失",
+                "market_source": stock.get("市场数据来源", stock_value(stock, "data_source") or "数据缺失"),
+                "finance_source": stock.get("财务数据来源", stock_value(stock, "data_source") or "数据缺失"),
+                "price": stock_value(stock, "price"),
+                "pct_change": stock_value(stock, "pct_change"),
+                "turnover": stock_value(stock, "turnover"),
+                "pe": stock_value(stock, "pe"),
+                "pb": stock_value(stock, "pb"),
+                "turnover_rate": stock_value(stock, "turnover_rate"),
+                "market_cap": stock_value(stock, "market_cap"),
+                "float_market_cap": stock_value(stock, "float_market_cap"),
+                "volume_ratio": stock_value(stock, "volume_ratio"),
+                "amplitude": stock_value(stock, "amplitude"),
+                "in_out_ratio": stock_value(stock, "in_out_ratio"),
+                "roe": stock_value(stock, "roe"),
+                "net_margin": stock_value(stock, "net_margin"),
+                "gross_margin": stock_value(stock, "gross_margin"),
+                "revenue_growth": stock_value(stock, "revenue_growth"),
+                "profit_growth": stock_value(stock, "profit_growth"),
+                "debt_ratio": stock_value(stock, "debt_ratio"),
+                "cashflow_profit_ratio": stock_value(stock, "cashflow_profit_ratio"),
+                "updated_at": stock_value(stock, "updated_at"),
                 "level": item_level[0],
                 "color": item_level[1],
                 "financial_score": finance["score"],
@@ -444,9 +512,9 @@ def analyze_portfolio(
         data_status = "数据不足，不能做完整判断"
     elif finance_missing:
         data_status = "部分数据缺失，已保守判断"
-    elif any(stock.get("数据来源") == "真实数据" for stock in stocks):
+    elif any(stock_value(stock, "data_source") == "真实数据" for stock in stocks):
         data_status = "已使用真实数据，并结合本地缓存"
-    elif all(stock.get("数据来源") == "示例数据" for stock in stocks):
+    elif all(stock_value(stock, "data_source") == "示例数据" for stock in stocks):
         data_status = "示例数据"
     else:
         data_status = "本地缓存"
