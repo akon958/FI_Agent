@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from analyzer import analyze_portfolio
-from ai_report import generate_agent_report
+try:
+    from ai_report import generate_agent_report  # type: ignore
+except ImportError:
+    def generate_agent_report(agent_context: dict, mode: str = "爸妈版") -> str:  # type: ignore[misc]
+        return (
+            "AI 报告模块需要重新部署最新版本。\n\n"
+            "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+        )
 from data_fetcher import get_stock_metrics, normalize_code
 
 

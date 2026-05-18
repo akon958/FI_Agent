@@ -10,14 +10,29 @@ import streamlit as st
 
 from analyzer import analyze_portfolio
 from agent import run_family_risk_agent
-from ai_report import generate_agent_report, generate_parent_friendly_report
+# 兼容导入：即使云端 ai_report.py 还是旧版本，App 也能启动
+_AI_REPORT_FALLBACK_MSG = "AI 报告模块需要重新部署最新版本。\n\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+
 try:
-    from ai_report import answer_followup_question, FOLLOWUP_QUESTIONS
+    from ai_report import generate_agent_report  # type: ignore
+except ImportError:
+    def generate_agent_report(agent_context: dict, mode: str = "爸妈版") -> str:  # type: ignore[misc]
+        return _AI_REPORT_FALLBACK_MSG
+
+try:
+    from ai_report import generate_parent_friendly_report  # type: ignore
+except ImportError:
+    def generate_parent_friendly_report(analysis: dict, api_key: str) -> str:  # type: ignore[misc]
+        return _AI_REPORT_FALLBACK_MSG
+
+try:
+    from ai_report import answer_followup_question, FOLLOWUP_QUESTIONS  # type: ignore
 except ImportError:
     FOLLOWUP_QUESTIONS: list[str] = []
 
     def answer_followup_question(ctx: dict, question: str) -> str:  # type: ignore[misc]
-        return "追问功能需要重新部署最新版本。\n\n本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
+        return _AI_REPORT_FALLBACK_MSG
+
 
 from data_fetcher import (
     get_cache_summary,
