@@ -13,6 +13,99 @@ def _safe_text(value: Any, default: str = "") -> str:
     return str(value)
 
 
+def _fmt_percent(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "暂无"
+
+
+def _sanitize_report_text(text: str) -> str:
+    replacements = {
+        "买入": "继续观察",
+        "卖出": "重点复盘",
+        "加仓": "增加投入前先讨论",
+        "减仓": "控制集中度",
+        "强烈": "明显",
+        "抄底": "低位判断",
+        "必涨": "确定上涨",
+        "一定赚钱": "确定有收益",
+        "马上操作": "立刻处理",
+        "预测涨跌": "判断短期方向",
+        "我们可能需要慢慢调整": "后续讨论时可以重点关注这一点",
+    }
+    safe = text
+    for old, new in replacements.items():
+        safe = safe.replace(old, new)
+    return safe
+
+
+def _flatten_missing_data(missing_data: dict[str, Any]) -> str:
+    if not missing_data:
+        return "这次体检没有发现明显的数据缺口。"
+    parts = []
+    valuation_missing = False
+    for title, items in missing_data.items():
+        if not items:
+            continue
+        if "估值" in title:
+            valuation_missing = True
+            continue
+        parts.append(f"{title}涉及 {len(items)} 只标的")
+    if valuation_missing:
+        parts.insert(0, "估值数据暂缺，本次不评价估值高低。")
+    return "；".join(parts) if parts else "这次体检没有发现明显的数据缺口。"
+
+
+def generate_agent_report(agent_context: dict[str, Any]) -> str:
+    """Generate a family-facing report strictly from the agent_context fields."""
+    holdings = agent_context.get("holdings", []) or []
+    main_risks = agent_context.get("main_risks", []) or []
+    missing_data = agent_context.get("missing_data", {}) or {}
+    risk_score = agent_context.get("risk_score", 0)
+    risk_level = agent_context.get("risk_level", "暂无")
+    cash_ratio = agent_context.get("cash_ratio", 0)
+    stock_ratio = agent_context.get("stock_ratio", 0)
+    max_position_ratio = agent_context.get("max_position_ratio", 0)
+    risk_preference = agent_context.get("risk_preference", "稳健")
+    data_status = agent_context.get("data_status", "本地缓存")
+    history_summary = agent_context.get("history_summary", "")
+
+    if max_position_ratio >= 0.40:
+        overall = "这个组合需要多留心，主要是单只标的占比偏高，家庭资金集中度不低。"
+    elif stock_ratio >= 0.75:
+        overall = "这个组合的股票/基金占比较高，遇到市场波动时，家里感受到的压力可能会更明显。"
+    elif cash_ratio >= 0.30:
+        overall = "这个组合整体现金垫比较厚，短期用钱压力相对小一些。"
+    else:
+        overall = "这个组合整体风险不算极端，但仍要重点看现金垫、单只占比和数据是否完整。"
+
+    primary_risk = main_risks[0] if main_risks else "目前没有特别刺眼的风险点，但仍建议定期复盘。"
+    holding_names = "、".join(
+        f"{item.get('code', '')} {item.get('name', '')}".strip()
+        for item in holdings[:5]
+    ) or "当前持仓"
+
+    missing_text = _flatten_missing_data(missing_data)
+    history_text = f"最近历史记录提示：{history_summary}" if history_summary else "目前没有可参考的历史体检摘要。"
+
+    report = f"""【整体判断】
+爸妈看这个结果时，先记住一句话：这次体检只是在看家庭持仓风险，不是在判断明天涨跌。当前组合涉及 {holding_names}，综合评分为 {risk_score}/100，风险等级是{risk_level}。按“{risk_preference}”的风险承受能力看，现金比例约为 {_fmt_percent(cash_ratio)}，股票/基金持仓比例约为 {_fmt_percent(stock_ratio)}，最大单只持仓占比约为 {_fmt_percent(max_position_ratio)}。{overall}
+
+【主要风险】
+这次最需要关注的是：{primary_risk} 如果钱集中在少数标的或同一类行业上，家里对单一变化会更敏感。后续讨论时可以重点关注这一点，同时把家庭备用金放在前面考虑。
+
+【数据缺失说明】
+当前数据状态：{data_status}。{missing_text} 如果某些数据暂时没有，本次就只做保守体检，不把缺失部分当成好消息，也不编造没有的数据。
+
+【给爸妈重点看的地方】
+爸妈看这个结果时，不用盯着复杂指标，先看三件事：第一，现金够不够应付家里临时用钱；第二，单只标的占比会不会太高；第三，公司的经营和财务数据是否够完整。{history_text} 这个结果适合拿来做家庭讨论和复盘，不适合当成操作指令。
+
+【免责声明】
+{DISCLAIMER}"""
+    return _sanitize_report_text(report)
+
+
 def _build_ai_context(analysis: dict[str, Any]) -> dict[str, Any]:
     stock_items = []
     for item in analysis.get("stock_results", []):
