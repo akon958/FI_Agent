@@ -17,7 +17,7 @@ from data_fetcher import (
     refresh_current_holdings_cache,
     refresh_market_cache,
 )
-from report_generator import generate_txt_report, money, percent
+from report_generator import generate_ai_txt_report, generate_txt_report, money, percent
 
 
 APP_TITLE = "家庭投资助手"
@@ -1773,14 +1773,33 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
         st.markdown(st.session_state["ai_report"])
         render_html("</div>")
 
+    dl_col1, dl_col2 = st.columns(2)
     report_text = generate_txt_report(analysis)
-    st.download_button(
-        "下载 txt 报告",
+    dl_col1.download_button(
+        "↓ 数据分析报告",
         data=report_text.encode("utf-8"),
-        file_name="家庭投资雷达体检报告.txt",
+        file_name="家庭投资体检_数据报告.txt",
         mime="text/plain",
         use_container_width=True,
+        help="包含评分、持仓明细、风险提示的结构化报告",
     )
+    if "ai_report" in st.session_state:
+        ai_report_text = generate_ai_txt_report(st.session_state["ai_report"], analysis)
+        dl_col2.download_button(
+            "↓ AI 通俗说明",
+            data=ai_report_text.encode("utf-8"),
+            file_name="家庭投资体检_AI说明.txt",
+            mime="text/plain",
+            use_container_width=True,
+            help="DeepSeek 生成的家人版说明，适合直接转发",
+        )
+    else:
+        dl_col2.button(
+            "↓ AI 通俗说明",
+            use_container_width=True,
+            disabled=True,
+            help="先点击上方'生成 AI 风险说明'按钮",
+        )
 
 
 def analysis_page() -> None:
