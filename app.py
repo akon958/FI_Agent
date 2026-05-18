@@ -1908,9 +1908,13 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
         """
     )
 
-    with st.expander("Agent 执行步骤", expanded=True):
+    with st.expander("Agent 执行进度", expanded=True):
         for step in agent_result.get("agent_steps", []):
-            st.write(f"- {step}")
+            if isinstance(step, dict):
+                st.write(f"**{step.get('title', '')}**")
+                st.caption(step.get("description", ""))
+            else:
+                st.write(f"- {step}")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -1934,6 +1938,12 @@ def agent_result_block(agent_result: dict[str, Any]) -> None:
     st.markdown(agent_result.get("ai_report", "暂无 AI 风险说明。"))
     render_html("</div>")
 
+    with st.expander("开发者信息 / 调试详情", expanded=False):
+        for step in agent_result.get("debug_steps", []):
+            st.write(f"- {step}")
+        st.write(f"- saved_history: {agent_result.get('saved_history')}")
+        st.write(f"- data_status: {agent_result.get('data_status')}")
+
 
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
@@ -1948,7 +1958,7 @@ def analysis_page() -> None:
     for warning in fetch_warnings:
         st.warning(warning)
 
-    with st.expander("普通分析功能", expanded=False):
+    with st.expander("普通分析 / 调试入口", expanded=False):
         stock_header(analysis)
         ai_report_block(analysis)
         allocation_block(analysis)

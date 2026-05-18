@@ -56,7 +56,7 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
     try:
         import realtime_data  # type: ignore
     except Exception:  # noqa: BLE001
-        return None, "未发现 realtime_data.py，使用本地缓存。"
+        return None, "数据来源：本地缓存。后续可接入实时行情。"
 
     for func_name in ("get_realtime_data", "get_stock_metrics", "fetch_realtime_quotes"):
         func = getattr(realtime_data, func_name, None)
@@ -70,7 +70,23 @@ def _try_realtime_data(codes: list[str]) -> tuple[list[dict[str, Any]] | None, s
                 return data, f"已尝试使用 realtime_data.py 的 {func_name}。"
         except Exception:  # noqa: BLE001
             continue
-    return None, "实时行情读取失败，已自动回退本地缓存。"
+    return None, "当前使用本地缓存数据，实时行情暂未接入。"
+
+
+def _safe_ai_text(text: str) -> str:
+    replacements = {
+        "买入": "继续观察",
+        "卖出": "重点复盘",
+        "加仓": "增加关注",
+        "减仓": "控制集中度",
+        "推荐": "提示",
+        "预测涨跌": "判断短期方向",
+        "我们可能需要慢慢调整": "后续讨论时可以重点关注这一点",
+    }
+    safe = text
+    for old, new in replacements.items():
+        safe = safe.replace(old, new)
+    return safe
 
 
 def _has_any_value(stock: dict[str, Any], fields: list[str]) -> bool:
@@ -158,10 +174,32 @@ def run_family_risk_agent(
     risk_preference: str = "稳健",
     user_goal: str = "检查家庭持仓风险",
 ) -> dict[str, Any]:
-    agent_steps: list[str] = []
+    agent_steps = [
+        {
+            "title": "检查输入信息",
+            "description": "确认股票代码、持仓金额、家庭现金和风险承受能力是否完整。",
+        },
+        {
+            "title": "读取数据",
+            "description": "读取本地行情和财务缓存；如果实时行情未接入，则使用本地缓存。",
+        },
+        {
+            "title": "计算家庭持仓风险",
+            "description": "计算持仓占比、现金比例、集中度风险和数据缺失情况。",
+        },
+        {
+            "title": "生成给家人的风险说明",
+            "description": "用简单语言解释主要风险和需要关注的地方。",
+        },
+        {
+            "title": "保存本次体检记录",
+            "description": "如果 storage.py 可用，则保存到历史记录。",
+        },
+    ]
+    debug_steps: list[str] = []
     warnings: list[str] = []
 
-    agent_steps.append("1. 检查用户输入是否完整")
+    debug_steps.append("检查用户输入是否完整")
     clean_holdings, input_warnings = _normalize_holdings(holdings)
     warnings.extend(input_warnings)
     cash = _to_float(family_cash)
@@ -172,6 +210,7 @@ def run_family_risk_agent(
         return {
             "success": False,
             "agent_steps": agent_steps,
+            "debug_steps": debug_steps,
             "portfolio_summary": {},
             "data_status": "输入不完整",
             "risk_score": 0,
@@ -184,17 +223,17 @@ def run_family_risk_agent(
         }
 
     codes = [item["code"] for item in clean_holdings]
-    agent_steps.append("2. 读取 stock_metrics.csv 中已有行情/财务缓存")
+    debug_steps.append("读取 stock_metrics.csv 中已有行情/财务缓存")
     stocks, fetch_warnings = get_stock_metrics(codes)
     warnings.extend(fetch_warnings)
 
-    agent_steps.append("3. 尝试读取实时行情，失败则回退 stock_metrics.csv")
+    debug_steps.append("尝试读取 realtime_data.py，失败则回退 stock_metrics.csv")
     realtime_rows, realtime_message = _try_realtime_data(codes)
     warnings.append(realtime_message)
     if realtime_rows:
         stocks = realtime_rows
 
-    agent_steps.append("4. 计算持仓比例、整体仓位和现金比例")
+    debug_steps.append("计算持仓比例、整体仓位和现金比例")
     stock_total = sum(item["amount"] for item in clean_holdings)
     total_assets = cash + stock_total
     portfolio_summary = {
@@ -208,35 +247,36 @@ def run_family_risk_agent(
         "max_single_ratio": max((item["amount"] / total_assets for item in clean_holdings), default=0) if total_assets > 0 else 0,
     }
 
-    agent_steps.append("5. 判断单只集中风险和现金压力")
+    debug_steps.append("判断单只集中风险和现金压力")
     if portfolio_summary["max_single_ratio"] > 0.40:
         warnings.append("单只持仓超过家庭可投资资金的 40%，集中度偏高。")
     if portfolio_summary["cash_ratio"] < 0.10:
         warnings.append("现金比例偏低，家庭备用金需要优先关注。")
 
-    agent_steps.append("6. 识别行情、估值和财务数据缺失")
+    debug_steps.append("识别行情、估值和财务数据缺失")
     missing_data = _collect_missing_data(stocks)
 
-    agent_steps.append("7. 调用 analyzer.py 生成风险分析结果")
+    debug_steps.append("调用 analyzer.py 生成风险分析结果")
     analysis = analyze_portfolio(cash, risk_preference, clean_holdings, stocks)
 
-    agent_steps.append("8. 组装 agent_context")
+    debug_steps.append("组装 agent_context")
     data_status = analysis.get("data_status", "本地缓存")
     main_risks = analysis.get("risk_notes", [])[:8]
 
-    agent_steps.append("9. 调用 ai_report.py 生成给爸妈看的风险说明")
+    debug_steps.append("调用 ai_report.py 生成给爸妈看的风险说明")
     api_key = _get_deepseek_api_key()
     if api_key:
         try:
-            ai_report = generate_parent_friendly_report(analysis, api_key)
+            ai_report = _safe_ai_text(generate_parent_friendly_report(analysis, api_key))
         except Exception:  # noqa: BLE001
             ai_report = "AI 分析暂时不可用，基础风险体检结果不受影响。"
     else:
-        ai_report = "未配置 AI 分析功能。\n\n" + _fallback_ai_report(analysis, missing_data)
+        ai_report = "未配置 AI 分析功能。\n\n" + _safe_ai_text(_fallback_ai_report(analysis, missing_data))
 
     agent_result = {
         "success": True,
         "agent_steps": agent_steps,
+        "debug_steps": debug_steps,
         "portfolio_summary": portfolio_summary,
         "data_status": data_status,
         "risk_score": analysis.get("score", 0),
@@ -251,6 +291,6 @@ def run_family_risk_agent(
         "holdings": clean_holdings,
     }
 
-    agent_steps.append("10. 保存 analysis_history.csv（如本地 storage.py 可用）")
+    debug_steps.append("保存 analysis_history.csv（如本地 storage.py 可用）")
     agent_result["saved_history"] = _save_history(agent_result, analysis)
     return agent_result
