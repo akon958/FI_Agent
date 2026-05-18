@@ -24,7 +24,7 @@ APP_TITLE = "家庭投资助手"
 APP_SUBTITLE = "Family Investment Agent"
 DEFAULT_CODES = ["600519", "000001", "300750"]
 DEFAULT_AMOUNTS = [20000.0, 10000.0, 0.0]
-HOME_DISCLAIMER = "本工具不提供具体买卖建议，所有数据仅供学习参考。投资有风险，决策需谨慎。"
+HOME_DISCLAIMER = "本工具只做家庭投资风险体检和学习参考，不构成任何投资建议，也不提供买卖推荐。"
 REPORT_DISCLAIMER = "本报告由 AI 综合生成，仅供学习参考，不构成投资建议。投资有风险，决策需谨慎。"
 
 
@@ -61,13 +61,10 @@ def render_html(html: str) -> None:
 def init_state() -> None:
     defaults = {
         "holding_rows": 3,
-        "font_size": 17,
+        "font_size": 14,
         "dark_mode": False,
         "fit_open": False,
-        "notes": [
-            {"who": "妈妈", "when": "昨天 20:12", "body": "先看清楚风险，不急着做决定。", "avatar": "妈"},
-            {"who": "爸爸", "when": "今天 08:30", "body": "我更关心现金比例够不够，报告里这一点很有用。", "avatar": "爸"},
-        ],
+        "notes": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -173,8 +170,8 @@ def inject_css() -> None:
             background: var(--bg);
         }}
         .main .block-container {{
-            max-width: 1200px;
-            padding: 1.25rem 2rem 5rem;
+            max-width: 960px;
+            padding: 1.25rem 1.5rem 90px;
         }}
         header[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer {{
             visibility: hidden;
@@ -391,11 +388,11 @@ def inject_css() -> None:
             font-weight: 700;
         }}
         .hero-title {{
-            margin: 1rem 0 0.85rem;
+            margin: 0.6rem 0 0.65rem;
             font-family: var(--font-display);
-            font-size: 2.4rem;
+            font-size: 1.5rem;
             font-weight: 600;
-            line-height: 1.25;
+            line-height: 1.28;
             color: var(--text);
             letter-spacing: -0.01em;
         }}
@@ -536,7 +533,7 @@ def inject_css() -> None:
             border: 1px solid var(--border);
             border-radius: 14px;
             background: var(--surface);
-            padding: 1.6rem;
+            padding: 0.9rem 1.1rem;
             transition: all 160ms ease;
         }}
         .watch-card:hover {{
@@ -688,9 +685,9 @@ def inject_css() -> None:
             color: var(--text-2);
         }}
         .stock-title {{
-            margin: 0.8rem 0 0.25rem;
+            margin: 0.6rem 0 0.2rem;
             font-family: var(--font-display);
-            font-size: 2.4rem;
+            font-size: 1.7rem;
             font-weight: 600;
         }}
         .basic-grid {{
@@ -891,7 +888,7 @@ def inject_css() -> None:
         }}
         @media (max-width: 640px) {{
             .main .block-container {{
-                padding: 1rem 0.85rem 4rem;
+                padding: 1rem 0.85rem 90px;
             }}
             .site-header {{
                 margin-left: -0.85rem;
@@ -906,7 +903,7 @@ def inject_css() -> None:
                 padding: 1.45rem;
             }}
             .hero-title, .stock-title {{
-                font-size: 1.85rem;
+                font-size: 1.25rem;
             }}
             .block-head, .breadcrumb, .watch-top, .price-line {{
                 align-items: start;
@@ -935,52 +932,29 @@ def html_escape(value: Any) -> str:
 
 
 def init_controls() -> None:
-    cols = st.columns([1, 1, 1, 1, 6])
-    if cols[0].button("A-", use_container_width=True):
+    _, c1, c2, c3 = st.columns([8, 1, 1, 1])
+    if c1.button("A-", use_container_width=True):
         st.session_state.font_size = max(14, int(st.session_state.font_size) - 1)
         st.rerun()
-    if cols[1].button("A+", use_container_width=True):
+    if c2.button("A+", use_container_width=True):
         st.session_state.font_size = min(22, int(st.session_state.font_size) + 1)
         st.rerun()
     label = "浅色" if st.session_state.dark_mode else "暗色"
-    if cols[2].button(label, use_container_width=True):
+    if c3.button(label, use_container_width=True):
         st.session_state.dark_mode = not st.session_state.dark_mode
         st.rerun()
-    if cols[3].button("首页", use_container_width=True):
-        st.session_state.pop("analysis", None)
-        st.session_state.pop("stocks", None)
-        st.session_state.pop("fetch_warnings", None)
-        st.rerun()
-    render_html(
-        f"""
-        <div class="settings-strip">
-            <span class="pill">字号 {st.session_state.font_size}px</span>
-            <span class="pill">显示设置已应用</span>
-        </div>
-        """
-    )
 
 
 def site_header() -> None:
     render_html(
         """
-        <div class="site-header">
+        <div class="site-header" style="grid-template-columns: 1fr;">
             <div class="brand">
                 <div class="brand-mark">家</div>
                 <div>
                     <div class="brand-cn">家庭投资助手</div>
                     <div class="brand-en">Family Investment Agent</div>
                 </div>
-            </div>
-            <nav class="site-nav" aria-label="主导航">
-                <span>首页</span>
-                <span>我的关注</span>
-                <span>家庭账户</span>
-                <span>帮助</span>
-            </nav>
-            <div class="family-chip">
-                <span class="family-avatar">家</span>
-                <span>我家 · 3 位成员</span>
             </div>
         </div>
         """
@@ -1039,33 +1013,16 @@ def set_first_code(code: str) -> None:
 
 
 def home_hero() -> None:
-    left, right = st.columns([1.65, 1], gap="large")
-    with left:
-        st.markdown(
-            """
-            <section class="hero-card">
-                <div class="eyebrow">家庭投资助手 · 长期、稳健、共同决策</div>
-                <h1 class="hero-title">输入一只股票，<br>我们一起把它看清楚。</h1>
-                <p class="hero-subtitle">输入股票代码或名称，AI 会给出适合家庭长期持有视角的分析报告。不预测涨跌，只帮你判断"这家公司值不值得放进家庭账户"。</p>
-            """,
-            unsafe_allow_html=True,
-        )
-        portfolio_form()
-        st.markdown(
-            """
-                <div class="quick-row">
-                    <span>最近大家在看：</span>
-                    <span class="chip">贵州茅台 <small>600519</small></span>
-                    <span class="chip">平安银行 <small>000001</small></span>
-                    <span class="chip">宁德时代 <small>300750</small></span>
-                    <span class="chip">招商银行 <small>600036</small></span>
-                </div>
-            </section>
-            """,
-            unsafe_allow_html=True,
-        )
-    with right:
-        market_aside()
+    render_html(
+        """
+        <div class="hero-card" style="padding: 1.3rem 1.3rem 0.6rem; margin-bottom: 0.5rem;">
+            <div class="eyebrow">家庭投资风险体检工具</div>
+            <h1 class="hero-title">输入持仓，看清风险。</h1>
+            <p class="hero-subtitle">帮助家人看清这只标的的风险、数据是否完整，以及是否需要继续观察。不预测涨跌，不构成买卖建议。</p>
+        </div>
+        """
+    )
+    portfolio_form()
 
 
 def portfolio_form() -> None:
@@ -1116,7 +1073,7 @@ def portfolio_form() -> None:
                 )
                 raw_more.append({"code": code, "amount": amount})
 
-        submitted = st.form_submit_button("生成分析报告", use_container_width=True)
+        submitted = st.form_submit_button("一键智能体检", use_container_width=True)
 
     if st.button("增加一行持仓", use_container_width=True):
         st.session_state.holding_rows += 1
@@ -1199,7 +1156,6 @@ def watchlist_block() -> None:
                     <div class="big-number">{html_escape(item["price"])}</div>
                     <div class="change-text {cls}">{signed_change(float(item["change"]))}</div>
                 </div>
-                <div class="watch-link">查看分析 →</div>
             </article>
             """
         )
@@ -1208,8 +1164,8 @@ def watchlist_block() -> None:
         <section class="block">
             <div class="block-head">
                 <div>
-                    <h2 class="block-title">家人共享的关注列表</h2>
-                    <p class="block-subtitle">把家里常看的公司放在一起，讨论时更有上下文。</p>
+                    <h2 class="block-title">我的关注列表</h2>
+                    <p class="block-subtitle">常看的公司放在一起，快速触发分析。接入云数据库后可多人共享。</p>
                 </div>
                 <div class="ghost-btn">＋ 添加关注</div>
             </div>
@@ -1267,11 +1223,11 @@ def guide_block() -> None:
             <div class="guide-list">
                 <div class="guide-step">
                     <div class="step-num">1</div>
-                    <div><div class="step-title">输入想了解的股票</div><div class="muted">直接输入代码（如 600519）、公司名称（如 贵州茅台），或从上方的关注列表点击。</div></div>
+                    <div><div class="step-title">输入想了解的股票</div><div class="muted">直接输入股票或基金代码（如 600519），填入持仓金额和家庭现金，点击一键智能体检。</div></div>
                 </div>
                 <div class="guide-step">
                     <div class="step-num">2</div>
-                    <div><div class="step-title">查看分析报告</div><div class="muted">报告会先给出"结论"——是否适合长期持有；下方再展开估值、风险、新闻等详细信息。</div></div>
+                    <div><div class="step-title">查看体检结果</div><div class="muted">报告给出综合评分和风险等级；下方展开风险提示、财务数据、持仓明细。</div></div>
                 </div>
                 <div class="guide-step">
                     <div class="step-num">3</div>
@@ -1325,9 +1281,15 @@ def cache_tools() -> None:
 def home_page() -> None:
     home_hero()
     cache_tools()
-    watchlist_block()
-    recent_block()
     guide_block()
+    with st.expander("开发中功能（暂未接入实时数据 / 云数据库，后续开放）", expanded=False):
+        st.info("以下功能正在开发中，当前展示为静态演示数据，不代表真实行情或真实账户。")
+        st.markdown("#### 今日大盘")
+        market_aside()
+        st.markdown("---")
+        watchlist_block()
+        st.markdown("---")
+        recent_block()
 
 
 def to_float(value: Any) -> float | None:
@@ -1419,7 +1381,7 @@ def score_dial(score: int) -> str:
 
 def verdict_headline(score: int) -> str:
     if score >= 80:
-        return "稳健 · 适合长期持有"
+        return "稳健 · 适合长期观察"
     if score >= 60:
         return "中性 · 需观察"
     if score >= 45:
@@ -1490,7 +1452,7 @@ def ai_report_block(analysis: dict[str, Any]) -> None:
             <div class="block-head">
                 <div>
                     <h2 class="block-title">✦ AI 分析报告</h2>
-                    <p class="block-subtitle">面向"家庭长期持有"视角生成 · 不构成具体买卖建议</p>
+                    <p class="block-subtitle">面向"家庭长期观察"视角生成 · 不构成具体买卖建议</p>
                 </div>
                 <div class="muted">报告版本 v2026-05-17</div>
             </div>
@@ -1710,33 +1672,42 @@ def discussion_block() -> None:
         <section class="block">
             <div class="block-head">
                 <div>
-                    <h2 class="block-title">家庭讨论 · 共同决策</h2>
-                    <p class="block-subtitle">大家一起聊聊：买不买、买多少、什么时候买。</p>
+                    <h2 class="block-title">家庭观察记录</h2>
+                    <p class="block-subtitle">记录家人对这只标的的看法，方便回顾和共同决策。云端同步开发中。</p>
                 </div>
             </div>
         </section>
         """
     )
-    note_text = st.text_area("家庭讨论", placeholder="留下你的想法，家人都能看到…", label_visibility="collapsed")
-    if st.button("发布想法", use_container_width=True) and note_text.strip():
+    note_text = st.text_area(
+        "新增观察记录",
+        placeholder="记录你的看法，例如：觉得估值偏高，先观察一个季度再说。",
+        label_visibility="collapsed",
+    )
+    btn_col, tip_col = st.columns([2, 5])
+    if btn_col.button("发布记录", use_container_width=True) and note_text.strip():
         st.session_state.notes.insert(0, {"who": "我", "when": "刚刚", "body": note_text.strip(), "avatar": "我"})
         st.rerun()
-    note_cards = []
-    for note in st.session_state.notes:
-        note_cards.append(
-            f"""
-            <article class="note-card">
-                <div class="note-head">
-                    <div style="display:flex; gap:.7rem; align-items:center;">
-                        <div class="note-avatar">{html_escape(note["avatar"])}</div>
-                        <div><strong>{html_escape(note["who"])}</strong><div class="muted">{html_escape(note["when"])}</div></div>
+    tip_col.caption("记录仅保存在当前会话 · 关闭页面后清除 · 云端同步开发中")
+    if not st.session_state.notes:
+        st.info("暂无观察记录。")
+    else:
+        note_cards = []
+        for note in st.session_state.notes:
+            note_cards.append(
+                f"""
+                <article class="note-card">
+                    <div class="note-head">
+                        <div style="display:flex; gap:.7rem; align-items:center;">
+                            <div class="note-avatar">{html_escape(note["avatar"])}</div>
+                            <div><strong>{html_escape(note["who"])}</strong><div class="muted">{html_escape(note["when"])}</div></div>
+                        </div>
                     </div>
-                </div>
-                <p class="muted">{html_escape(note["body"])}</p>
-            </article>
-            """
-        )
-    render_html(f'<div class="news-grid">{"".join(note_cards)}</div>')
+                    <p class="muted">{html_escape(note["body"])}</p>
+                </article>
+                """
+            )
+        render_html(f'<div class="news-grid">{"".join(note_cards)}</div>')
 
 
 def get_deepseek_api_key() -> str:
@@ -1804,6 +1775,11 @@ def deepseek_block(analysis: dict[str, Any]) -> None:
 def analysis_page() -> None:
     analysis = st.session_state["analysis"]
     fetch_warnings = st.session_state.get("fetch_warnings", [])
+    if st.button("← 返回首页"):
+        st.session_state.pop("analysis", None)
+        st.session_state.pop("stocks", None)
+        st.session_state.pop("fetch_warnings", None)
+        st.rerun()
     stock_header(analysis)
     for warning in fetch_warnings:
         st.warning(warning)
@@ -1811,8 +1787,11 @@ def analysis_page() -> None:
     allocation_block(analysis)
     metric_grid(analysis)
     risk_grid(analysis)
-    holdings_detail(analysis)
-    news_block()
+    with st.expander("持仓明细与数据来源", expanded=False):
+        holdings_detail(analysis)
+    with st.expander("近期新闻与公告（开发中）", expanded=False):
+        st.info("暂未接入新闻接口，后续开放。")
+        news_block()
     discussion_block()
     deepseek_block(analysis)
     render_html(f'<div class="page-foot">{REPORT_DISCLAIMER}</div>')
